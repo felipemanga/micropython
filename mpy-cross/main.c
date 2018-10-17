@@ -34,6 +34,8 @@
 #include "py/runtime.h"
 #include "py/gc.h"
 #include "py/stackctrl.h"
+#include "py/objstr.h"
+#include "py/qstr.h"
 #ifdef _WIN32
 #include "ports/windows/fmode.h"
 #endif
@@ -281,6 +283,36 @@ uint mp_import_stat(const char *path) {
 }
 
 void nlr_jump_fail(void *val) {
-    printf("FATAL: uncaught NLR %p\n", val);
+    
+    if( mp_obj_is_exception_instance(val) ){
+	mp_obj_exception_t *exc = (mp_obj_exception_t*) val;
+	mp_obj_tuple_t *args = exc->args;
+
+	printf(
+	    "Error in %s, line %d:\n",
+	    qstr_str(exc->traceback_data[0]),
+	    (int) exc->traceback_data[1]
+	    );
+	
+	for (size_t i = 0; i < args->len; i++) {
+	    if (i > 0) {
+		printf(", ");
+	    }
+	    
+	    mp_obj_type_t *type = mp_obj_get_type(args->items[i]);
+	    if( type == &mp_type_str ){
+		GET_STR_DATA_LEN(args->items[i], str_data, str_len);
+		printf("%s", str_data);
+	    }else{
+		printf("%s", mp_obj_get_type_str(args->items[i]));
+	    }
+	    
+	}
+
+	printf("\n");
+
+    }else{
+	printf("\nFATAL: uncaught NLR %p\n", val);
+    }
     exit(1);
 }

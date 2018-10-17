@@ -1,0 +1,81 @@
+# The following is a temporary hack to forefully undefine vars that might have
+# be defined by a calling Makefile (from recursive make).
+# TODO: Find a better way to be able to call this Makefile recursively.
+ifneq ($(findstring undefine,$(.FEATURES)),)
+override undefine COPT
+override undefine CFLAGS_EXTRA
+override undefine LDFLAGS_EXTRA
+override undefine MICROPY_FORCE_32BIT
+override undefine CROSS_COMPILE
+override undefine FROZEN_DIR
+override undefine FROZEN_MPY_DIR
+override undefine BUILD
+override undefine PROG
+endif
+
+include ../py/mkenv.mk
+
+# define main target
+PROG = mpy-cross
+
+# qstr definitions (must come before including py.mk)
+QSTR_DEFS = qstrdefsport.h
+
+# OS name, for simple autoconfig
+UNAME_S := $(shell uname -s)
+
+STRIP = echo
+SIZE = echo
+
+# include py core make definitions
+include $(TOP)/py/py.mk
+
+INC += -I.
+INC += -I$(BUILD)
+INC += -I$(TOP)
+
+# compiler settings
+CWARN = -Wall -Werror
+CWARN += -Wpointer-arith -Wuninitialized -Wno-infinite-recursion
+CFLAGS = $(INC) $(CWARN) -std=gnu99 $(CFLAGS_MOD) $(COPT) -DMICROPY_NLR_SETJMP $(CFLAGS_EXTRA)
+CFLAGS += -fdata-sections -ffunction-sections -fno-asynchronous-unwind-tables -Wno-incompatible-pointer-types
+
+# Debugging/Optimization
+ifdef DEBUG
+CFLAGS += -g
+COPT = -O0
+else
+COPT = -Os #-DNDEBUG
+endif
+
+CFLAGS +=-Dnlr_jump=nlr_jump_fail
+
+CC = emcc
+CPP = gcc -E
+LD = emcc 
+
+LDFLAGS_EXTRA += -s INVOKE_RUN=0
+
+# Use clang syntax for map file
+LDFLAGS_ARCH = -Wl,-map,$@.map -Wl,-dead_strip
+
+LDFLAGS = $(LDFLAGS_MOD) $(LDFLAGS_ARCH) -lm $(LDFLAGS_EXTRA)
+
+# source files
+SRC_C = \
+	main.c \
+	gccollect.c \
+
+OBJ =  $(filter-out build/py/nlrsetjmp.o, $(PY_CORE_O))
+OBJ += $(addprefix $(BUILD)/, $(SRC_C:.c=.o))
+
+all: $(BUILD)/micropython.html
+
+$(BUILD)/micropython.bc: $(OBJ)
+	$(ECHO) "LINK $@"
+	$(Q)$(LD) $(LDFLAGS) -o $@ $^ $(LIBS)
+
+$(BUILD)/micropython.html: $(BUILD)/micropython.bc
+	emcc $^ -o $@
+
+include $(TOP)/py/mkrules.mk
