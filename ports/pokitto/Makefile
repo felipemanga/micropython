@@ -1,6 +1,6 @@
 include ../../py/mkenv.mk
 
-CROSS = 0
+CROSS = 1
 
 # qstr definitions (must come before including py.mk)
 QSTR_DEFS = qstrdefsport.h
@@ -12,17 +12,15 @@ QSTR_DEFS = qstrdefsport.h
 # include py core make definitions
 include $(TOP)/py/py.mk
 
-ifeq ($(CROSS), 1)
-CROSS_COMPILE = /cygdrive/c/EmBitz_share/em_armgcc/bin/arm-none-eabi-
-endif
+CROSS_COMPILE = arm-none-eabi-
 
 EXTMOD_DIR = $(TOP)/extmod
-POKITTO_DIR = ../../../PokittoLib2/Pokitto/POKITTO_LIBS/MicroPython
-MBED_HAL_DIR = ../../../PokittoLib2/Pokitto/mbed-pokitto/hal
-MBED_HAL_DIR2 = ../../../PokittoLib2/Pokitto/mbed-pokitto/targets/hal/TARGET_NXP/TARGET_LPC11U6X
-MBED_API_DIR = ../../../PokittoLib2/Pokitto/mbed-pokitto/api
-MBED_CMSIS_DIR = ../../../PokittoLib2/Pokitto/mbed-pokitto/targets/cmsis
-MBED_CMSIS_DIR2 = ../../../PokittoLib2/Pokitto/mbed-pokitto/targets/cmsis/TARGET_NXP/TARGET_LPC11U6X
+POKITTO_DIR = ../../../PokittoLib/Pokitto/POKITTO_LIBS/MicroPython
+MBED_HAL_DIR = ../../../PokittoLib/Pokitto/mbed-pokitto/hal
+MBED_HAL_DIR2 = ../../../PokittoLib/Pokitto/mbed-pokitto/targets/hal/TARGET_NXP/TARGET_LPC11U6X
+MBED_API_DIR = ../../../PokittoLib/Pokitto/mbed-pokitto/api
+MBED_CMSIS_DIR = ../../../PokittoLib/Pokitto/mbed-pokitto/targets/cmsis
+MBED_CMSIS_DIR2 = ../../../PokittoLib/Pokitto/mbed-pokitto/targets/cmsis/TARGET_NXP/TARGET_LPC11U6X
 
 INC += -I.
 INC += -I$(TOP)
@@ -38,9 +36,13 @@ INC += -I$(MBED_CMSIS_DIR2)
 ifeq ($(CROSS), 1)
 DFU = $(TOP)/tools/dfu.py
 PYDFU = $(TOP)/tools/pydfu.py
-CFLAGS_CORTEX_M4 = -mthumb -mcpu=cortex-m0plus -fsingle-precision-constant -fno-exceptions -fomit-frame-pointer -Wdouble-promotion 
+CFLAGS_CORTEX_M4 = -Wl,-n --specs=nano.specs -lnosys -mthumb -mcpu=cortex-m0plus -fsingle-precision-constant -fno-exceptions -fomit-frame-pointer -Wdouble-promotion
 CFLAGS = $(INC) -Wall -Werror -std=gnu11 -nostdlib $(CFLAGS_CORTEX_M4) $(COPT)
-LDFLAGS = -nostdlib -T stm32f405.ld -Map=$@.map --cref --gc-sections
+
+# LDFLAGS = -nostdlib -mthumb -mcpu=cortex-m0plus -Wl,-n --specs=nano.specs -lnosys -Map=$@.map --cref --gc-sections
+
+LD_FLAGS = -Wl,--gc-sections -Wl,--wrap,main -Wl,--wrap,_memalign_r -Wl,-n --specs=nano.specs -mcpu=cortex-m0plus -mthumb
+
 else
 LD = gcc
 CFLAGS = -m32 $(INC) -Wall -Werror -std=gnu11 $(COPT)
@@ -57,6 +59,8 @@ CFLAGS += -O3 -DNDEBUG
 CFLAGS += -fdata-sections -ffunction-sections
 endif
 
+CFLAGS += -Wno-stringop-overflow -Wno-unused-const-variable
+
 LIBS =
 
 SRC_C = \
@@ -68,9 +72,9 @@ SRC_C = \
 	modules/modupygame_mixer.c \
 	lib/utils/stdout_helpers.c \
 	lib/utils/pyexec.c \
-	lib/libc/string0.c \
-	lib/mp-readline/readline.c
-	#$(BUILD)/frozen_mpy.c
+	lib/mp-readline/readline.c \
+#	lib/libc/string0.c \
+#	$(BUILD)/frozen_mpy.c
 
 OBJ = $(PY_O) $(addprefix $(BUILD)/, $(SRC_C:.c=.o))
 
@@ -85,7 +89,6 @@ SRC_QSTR += modules/modmachine.c modules/machine_pin.c modules/modupygame.c modu
 #$(BUILD)/_frozen_mpy.c: frozentest.mpy $(BUILD)/genhdr/qstrdefs.generated.h
 #	$(ECHO) "MISC freezing bytecode"
 #	$(Q)$(PYTHON) ../tools/mpy-tool.py -f -q $(BUILD)/genhdr/qstrdefs.preprocessed.h -mlongint-impl=none $< > $@
-	
 
 #$(BUILD)/firmware.elf: $(OBJ)
 #	$(ECHO) "LINK $@"

@@ -454,8 +454,8 @@ STATIC mp_obj_t surface_blit(size_t n_args, const mp_obj_t *args) {
 
 	//TODO: take source->stride into account also
 	//TODO: check that source->format is acceptable
-	Pok_Display_blitFrameBuffer(x, y, source->width, source->height, transparentColor, source->buf);
-	return mp_const_none;
+    Pok_Display_blitFrameBuffer(x, y, source->width, source->height, transparentColor, source->buf);
+    return mp_const_none;
 }
 STATIC MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(surface_blit_obj, 4, 5, surface_blit);
 
@@ -492,9 +492,9 @@ STATIC mp_obj_t surface_setHwSprite(size_t n_args, const mp_obj_t *args) {
 
 	//TODO: take source->stride into account also
 	//TODO: check that source->format is acceptable
-	Pok_Display_setSprite(index, x, y, source->width, source->height, transparentColor, source->buf, palette16x16bit, doResetDirtyRect);
+    Pok_Display_setSprite(index, x, y, source->width, source->height, transparentColor, source->buf, palette16x16bit, doResetDirtyRect);
 
-	return mp_const_none;
+    return mp_const_none;
 }
 STATIC MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(surface_setHwSprite_obj, 7, 8, surface_setHwSprite);
 

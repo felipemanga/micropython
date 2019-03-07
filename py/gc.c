@@ -441,7 +441,7 @@ void *gc_alloc(size_t n_bytes, bool has_finaliser) {
     DEBUG_printf("gc_alloc(" UINT_FMT " bytes -> " UINT_FMT " blocks)\n", n_bytes, n_blocks);
 
     // Check for stack overflow here as this is a frequently called function.
-    CheckStack();  //!!HV    
+    // CheckStack();  //!!HV    
     
     // check for 0 allocation
     if (n_blocks == 0) {

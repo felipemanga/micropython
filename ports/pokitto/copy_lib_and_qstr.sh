@@ -1,4 +1,9 @@
-cp libmicropython.a ../../../PokittoLib2/Pokitto/POKITTO_LIBS/MicroPython
-cp build/genhdr/qstrdefs.generated.h ../../../PokittoLib2/Pokitto/POKITTO_LIBS/MicroPython/genhdr/
-cp build/genhdr/qstrdefs.preprocessed.h ../../../PokittoLib2/Pokitto/POKITTO_LIBS/MicroPython/genhdr/
+
+arm-none-eabi-ar d libmicropython.a string0.o
+arm-none-eabi-ar d libmicropython.a printf.o
+
+cp libmicropython.a ~/Projects/Pokitto/PyInSky/template-src/
+
+cp build/genhdr/qstrdefs.generated.h ~/Projects/Pokitto/PyInSky/template-src/genhdr/
+cp build/genhdr/qstrdefs.preprocessed.h ~/Projects/Pokitto/PyInSky/template-src/genhdr/
 
