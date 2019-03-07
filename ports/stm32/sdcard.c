@@ -169,8 +169,13 @@ void HAL_SD_MspInit(SD_HandleTypeDef *hsd) {
 
     #if defined(STM32H7)
     // Reset SDMMC
+    #if defined(MICROPY_HW_SDMMC2_CK)
+    __HAL_RCC_SDMMC2_FORCE_RESET();
+    __HAL_RCC_SDMMC2_RELEASE_RESET();
+    #else
     __HAL_RCC_SDMMC1_FORCE_RESET();
     __HAL_RCC_SDMMC1_RELEASE_RESET();
+    #endif
     #endif
 
     // NVIC configuration for SDIO interrupts
@@ -217,10 +222,6 @@ bool sdcard_power_on(void) {
     }
 
     // configure the SD bus width for wide operation
-    #if defined(STM32F7)
-    // use maximum SDMMC clock speed on F7 MCUs
-    sd_handle.Init.ClockBypass = SDMMC_CLOCK_BYPASS_ENABLE;
-    #endif
     if (HAL_SD_ConfigWideBusOperation(&sd_handle, SDIO_BUS_WIDE_4B) != HAL_OK) {
         HAL_SD_DeInit(&sd_handle);
         goto error;

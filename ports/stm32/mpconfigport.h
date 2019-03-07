@@ -32,6 +32,13 @@
 #include "mpconfigboard_common.h"
 
 // memory allocation policies
+#ifndef MICROPY_GC_STACK_ENTRY_TYPE
+#if MICROPY_HW_SDRAM_SIZE
+#define MICROPY_GC_STACK_ENTRY_TYPE uint32_t
+#else
+#define MICROPY_GC_STACK_ENTRY_TYPE uint16_t
+#endif
+#endif
 #define MICROPY_ALLOC_PATH_MAX      (128)
 
 // emitters
@@ -162,7 +169,7 @@
 
 // fatfs configuration used in ffconf.h
 #define MICROPY_FATFS_ENABLE_LFN       (1)
-#define MICROPY_FATFS_LFN_CODE_PAGE    (437) /* 1=SFN/ANSI 437=LFN/U.S.(OEM) */
+#define MICROPY_FATFS_LFN_CODE_PAGE    437 /* 1=SFN/ANSI 437=LFN/U.S.(OEM) */
 #define MICROPY_FATFS_USE_LABEL        (1)
 #define MICROPY_FATFS_RPATH            (2)
 #define MICROPY_FATFS_MULTI_PARTITION  (1)
@@ -206,17 +213,14 @@ extern const struct _mp_obj_module_t mp_module_onewire;
 // usocket implementation provided by lwIP
 #define SOCKET_BUILTIN_MODULE               { MP_ROM_QSTR(MP_QSTR_usocket), MP_ROM_PTR(&mp_module_lwip) },
 #define SOCKET_BUILTIN_MODULE_WEAK_LINKS    { MP_ROM_QSTR(MP_QSTR_socket), MP_ROM_PTR(&mp_module_lwip) },
-#define SOCKET_POLL extern void pyb_lwip_poll(void); pyb_lwip_poll();
 #elif MICROPY_PY_USOCKET
 // usocket implementation provided by skeleton wrapper
 #define SOCKET_BUILTIN_MODULE               { MP_ROM_QSTR(MP_QSTR_usocket), MP_ROM_PTR(&mp_module_usocket) },
 #define SOCKET_BUILTIN_MODULE_WEAK_LINKS    { MP_ROM_QSTR(MP_QSTR_socket), MP_ROM_PTR(&mp_module_usocket) },
-#define SOCKET_POLL
 #else
 // no usocket module
 #define SOCKET_BUILTIN_MODULE
 #define SOCKET_BUILTIN_MODULE_WEAK_LINKS
-#define SOCKET_POLL
 #endif
 
 #if MICROPY_PY_NETWORK
@@ -332,7 +336,6 @@ static inline mp_uint_t disable_irq(void) {
     do { \
         extern void mp_handle_pending(void); \
         mp_handle_pending(); \
-        SOCKET_POLL \
         if (pyb_thread_enabled) { \
             MP_THREAD_GIL_EXIT(); \
             pyb_thread_yield(); \
@@ -348,12 +351,16 @@ static inline mp_uint_t disable_irq(void) {
     do { \
         extern void mp_handle_pending(void); \
         mp_handle_pending(); \
-        SOCKET_POLL \
         __WFI(); \
     } while (0);
 
 #define MICROPY_THREAD_YIELD()
 #endif
+
+// The LwIP interface must run at a raised IRQ priority
+#define MICROPY_PY_LWIP_ENTER   uint32_t irq_state = raise_irq_pri(IRQ_PRI_PENDSV);
+#define MICROPY_PY_LWIP_REENTER irq_state = raise_irq_pri(IRQ_PRI_PENDSV);
+#define MICROPY_PY_LWIP_EXIT    restore_irq_pri(irq_state);
 
 // We need an implementation of the log2 function which is not a macro
 #define MP_NEED_LOG2 (1)

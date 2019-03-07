@@ -134,8 +134,7 @@ typedef struct _emit_method_table_t {
     void (*get_iter)(emit_t *emit, bool use_stack);
     void (*for_iter)(emit_t *emit, mp_uint_t label);
     void (*for_iter_end)(emit_t *emit);
-    void (*pop_block)(emit_t *emit);
-    void (*pop_except)(emit_t *emit);
+    void (*pop_except_jump)(emit_t *emit, mp_uint_t label, bool within_exc_handler);
     void (*unary_op)(emit_t *emit, mp_unary_op_t op);
     void (*binary_op)(emit_t *emit, mp_binary_op_t op);
     void (*build)(emit_t *emit, mp_uint_t n_args, int kind);
@@ -159,7 +158,10 @@ typedef struct _emit_method_table_t {
 
 int mp_native_type_from_qstr(qstr qst);
 
-void mp_emit_common_get_id_for_load(scope_t *scope, qstr qst);
+static inline void mp_emit_common_get_id_for_load(scope_t *scope, qstr qst) {
+    scope_find_or_add_id(scope, qst, ID_INFO_KIND_GLOBAL_IMPLICIT);
+}
+
 void mp_emit_common_get_id_for_modification(scope_t *scope, qstr qst);
 void mp_emit_common_id_op(emit_t *emit, const mp_emit_method_table_id_ops_t *emit_method_table, scope_t *scope, qstr qst);
 
@@ -229,8 +231,7 @@ void mp_emit_bc_end_finally(emit_t *emit);
 void mp_emit_bc_get_iter(emit_t *emit, bool use_stack);
 void mp_emit_bc_for_iter(emit_t *emit, mp_uint_t label);
 void mp_emit_bc_for_iter_end(emit_t *emit);
-void mp_emit_bc_pop_block(emit_t *emit);
-void mp_emit_bc_pop_except(emit_t *emit);
+void mp_emit_bc_pop_except_jump(emit_t *emit, mp_uint_t label, bool within_exc_handler);
 void mp_emit_bc_unary_op(emit_t *emit, mp_unary_op_t op);
 void mp_emit_bc_binary_op(emit_t *emit, mp_binary_op_t op);
 void mp_emit_bc_build(emit_t *emit, mp_uint_t n_args, int kind);

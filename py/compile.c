@@ -164,6 +164,7 @@ STATIC void compile_syntax_error(compiler_t *comp, mp_parse_node_t pn, const cha
 
 STATIC void compile_trailer_paren_helper(compiler_t *comp, mp_parse_node_t pn_arglist, bool is_method_call, int n_positional_extra);
 STATIC void compile_comprehension(compiler_t *comp, mp_parse_node_struct_t *pns, scope_kind_t kind);
+STATIC void compile_atom_brace_helper(compiler_t *comp, mp_parse_node_struct_t *pns, bool create_map);
 STATIC void compile_node(compiler_t *comp, mp_parse_node_t pn);
 
 STATIC uint comp_next_label(compiler_t *comp) {
@@ -1180,23 +1181,24 @@ STATIC void compile_import_from(compiler_t *comp, mp_parse_node_struct_t *pns) {
     }
 }
 
-STATIC void compile_declare_global(compiler_t *comp, mp_parse_node_t pn, qstr qst, bool added, id_info_t *id_info) {
-    if (!added && id_info->kind != ID_INFO_KIND_GLOBAL_EXPLICIT) {
+STATIC void compile_declare_global(compiler_t *comp, mp_parse_node_t pn, id_info_t *id_info) {
+    if (id_info->kind != ID_INFO_KIND_UNDECIDED && id_info->kind != ID_INFO_KIND_GLOBAL_EXPLICIT) {
         compile_syntax_error(comp, pn, "identifier redefined as global");
         return;
     }
     id_info->kind = ID_INFO_KIND_GLOBAL_EXPLICIT;
 
     // if the id exists in the global scope, set its kind to EXPLICIT_GLOBAL
-    id_info = scope_find_global(comp->scope_cur, qst);
+    id_info = scope_find_global(comp->scope_cur, id_info->qst);
     if (id_info != NULL) {
         id_info->kind = ID_INFO_KIND_GLOBAL_EXPLICIT;
     }
 }
 
-STATIC void compile_declare_nonlocal(compiler_t *comp, mp_parse_node_t pn, qstr qst, bool added, id_info_t *id_info) {
-    if (added) {
-        scope_find_local_and_close_over(comp->scope_cur, id_info, qst);
+STATIC void compile_declare_nonlocal(compiler_t *comp, mp_parse_node_t pn, id_info_t *id_info) {
+    if (id_info->kind == ID_INFO_KIND_UNDECIDED) {
+        id_info->kind = ID_INFO_KIND_GLOBAL_IMPLICIT;
+        scope_check_to_close_over(comp->scope_cur, id_info);
         if (id_info->kind == ID_INFO_KIND_GLOBAL_IMPLICIT) {
             compile_syntax_error(comp, pn, "no binding for nonlocal found");
         }
@@ -1218,12 +1220,11 @@ STATIC void compile_global_nonlocal_stmt(compiler_t *comp, mp_parse_node_struct_
         int n = mp_parse_node_extract_list(&pns->nodes[0], PN_name_list, &nodes);
         for (int i = 0; i < n; i++) {
             qstr qst = MP_PARSE_NODE_LEAF_ARG(nodes[i]);
-            bool added;
-            id_info_t *id_info = scope_find_or_add_id(comp->scope_cur, qst, &added);
+            id_info_t *id_info = scope_find_or_add_id(comp->scope_cur, qst, ID_INFO_KIND_UNDECIDED);
             if (is_global) {
-                compile_declare_global(comp, (mp_parse_node_t)pns, qst, added, id_info);
+                compile_declare_global(comp, (mp_parse_node_t)pns, id_info);
             } else {
-                compile_declare_nonlocal(comp, (mp_parse_node_t)pns, qst, added, id_info);
+                compile_declare_nonlocal(comp, (mp_parse_node_t)pns, id_info);
             }
         }
     }
@@ -1534,8 +1535,7 @@ STATIC void compile_try_except(compiler_t *comp, mp_parse_node_t pn_body, int n_
     compile_increase_except_level(comp, l1, MP_EMIT_SETUP_BLOCK_EXCEPT);
 
     compile_node(comp, pn_body); // body
-    EMIT(pop_block);
-    EMIT_ARG(jump, success_label); // jump over exception handler
+    EMIT_ARG(pop_except_jump, success_label, false); // jump over exception handler
 
     EMIT_ARG(label_assign, l1); // start of exception handler
     EMIT(start_except_handler);
@@ -1582,26 +1582,31 @@ STATIC void compile_try_except(compiler_t *comp, mp_parse_node_t pn_body, int n_
             compile_store_id(comp, qstr_exception_local);
         }
 
+        // If the exception is bound to a variable <e> then the <body> of the
+        // exception handler is wrapped in a try-finally so that the name <e> can
+        // be deleted (per Python semantics) even if the <body> has an exception.
+        // In such a case the generated code for the exception handler is:
+        //      try:
+        //          <body>
+        //      finally:
+        //          <e> = None
+        //          del <e>
         uint l3 = 0;
         if (qstr_exception_local != 0) {
             l3 = comp_next_label(comp);
             compile_increase_except_level(comp, l3, MP_EMIT_SETUP_BLOCK_FINALLY);
         }
-        compile_node(comp, pns_except->nodes[1]);
-        if (qstr_exception_local != 0) {
-            EMIT(pop_block);
-        }
-        EMIT(pop_except);
+        compile_node(comp, pns_except->nodes[1]); // the <body>
         if (qstr_exception_local != 0) {
             EMIT_ARG(load_const_tok, MP_TOKEN_KW_NONE);
             EMIT_ARG(label_assign, l3);
             EMIT_ARG(load_const_tok, MP_TOKEN_KW_NONE);
             compile_store_id(comp, qstr_exception_local);
             compile_delete_id(comp, qstr_exception_local);
-
             compile_decrease_except_level(comp);
         }
-        EMIT_ARG(jump, l2);
+
+        EMIT_ARG(pop_except_jump, l2, true);
         EMIT_ARG(label_assign, end_finally_label);
         EMIT_ARG(adjust_stack_size, 1); // stack adjust for the exception instance
     }
@@ -1627,7 +1632,6 @@ STATIC void compile_try_finally(compiler_t *comp, mp_parse_node_t pn_body, int n
     } else {
         compile_try_except(comp, pn_body, n_except, pn_except, pn_else);
     }
-    EMIT(pop_block);
     EMIT_ARG(load_const_tok, MP_TOKEN_KW_NONE);
     EMIT_ARG(label_assign, l_finally_block);
     compile_node(comp, pn_finally);
@@ -1735,8 +1739,7 @@ STATIC void compile_async_for_stmt(compiler_t *comp, mp_parse_node_struct_t *pns
     compile_load_id(comp, context);
     compile_await_object_method(comp, MP_QSTR___anext__);
     c_assign(comp, pns->nodes[0], ASSIGN_STORE); // variable
-    EMIT(pop_block);
-    EMIT_ARG(jump, try_else_label);
+    EMIT_ARG(pop_except_jump, try_else_label, false);
 
     EMIT_ARG(label_assign, try_exception_label);
     EMIT(start_except_handler);
@@ -1745,8 +1748,7 @@ STATIC void compile_async_for_stmt(compiler_t *comp, mp_parse_node_struct_t *pns
     EMIT_ARG(binary_op, MP_BINARY_OP_EXCEPTION_MATCH);
     EMIT_ARG(pop_jump_if, false, try_finally_label);
     EMIT(pop_top); // pop exception instance
-    EMIT(pop_except);
-    EMIT_ARG(jump, while_else_label);
+    EMIT_ARG(pop_except_jump, while_else_label, true);
 
     EMIT_ARG(label_assign, try_finally_label);
     EMIT_ARG(adjust_stack_size, 1); // if we jump here, the exc is on the stack
@@ -1803,8 +1805,7 @@ STATIC void compile_async_with_stmt_helper(compiler_t *comp, int n, mp_parse_nod
         compile_async_with_stmt_helper(comp, n - 1, nodes + 1, body);
         EMIT_ARG(adjust_stack_size, -3);
 
-        // Finish the "try" block
-        EMIT(pop_block);
+        // We have now finished the "try" block and fall through to the "finally"
 
         // At this point, after the with body has executed, we have 3 cases:
         // 1. no exception, we just fall through to this point; stack: (..., ctx_mgr)
@@ -1823,7 +1824,7 @@ STATIC void compile_async_with_stmt_helper(compiler_t *comp, int n, mp_parse_nod
 
         // Detect if TOS an exception or not
         EMIT(dup_top);
-        EMIT_LOAD_GLOBAL(MP_QSTR_Exception);
+        EMIT_LOAD_GLOBAL(MP_QSTR_BaseException);
         EMIT_ARG(binary_op, MP_BINARY_OP_EXCEPTION_MATCH);
         EMIT_ARG(pop_jump_if, false, l_ret_unwind_jump); // if not an exception then we have case 3
 
@@ -2240,6 +2241,20 @@ STATIC void compile_atom_expr_normal(compiler_t *comp, mp_parse_node_struct_t *p
             EMIT_ARG(call_function, 2, 0, 0);
             i = 1;
         }
+
+    #if MICROPY_COMP_CONST_LITERAL && MICROPY_PY_COLLECTIONS_ORDEREDDICT
+    // handle special OrderedDict constructor
+    } else if (MP_PARSE_NODE_IS_ID(pns->nodes[0])
+        && MP_PARSE_NODE_LEAF_ARG(pns->nodes[0]) == MP_QSTR_OrderedDict
+        && MP_PARSE_NODE_STRUCT_KIND(pns_trail[0]) == PN_trailer_paren
+        && MP_PARSE_NODE_IS_STRUCT_KIND(pns_trail[0]->nodes[0], PN_atom_brace)) {
+        // at this point we have matched "OrderedDict({...})"
+
+        EMIT_ARG(call_function, 0, 0, 0);
+        mp_parse_node_struct_t *pns_dict = (mp_parse_node_struct_t*)pns_trail[0]->nodes[0];
+        compile_atom_brace_helper(comp, pns_dict, false);
+        i = 1;
+    #endif
     }
 
     // compile the remaining trailers
@@ -2448,16 +2463,20 @@ STATIC void compile_atom_bracket(compiler_t *comp, mp_parse_node_struct_t *pns) 
     }
 }
 
-STATIC void compile_atom_brace(compiler_t *comp, mp_parse_node_struct_t *pns) {
+STATIC void compile_atom_brace_helper(compiler_t *comp, mp_parse_node_struct_t *pns, bool create_map) {
     mp_parse_node_t pn = pns->nodes[0];
     if (MP_PARSE_NODE_IS_NULL(pn)) {
         // empty dict
-        EMIT_ARG(build, 0, MP_EMIT_BUILD_MAP);
+        if (create_map) {
+            EMIT_ARG(build, 0, MP_EMIT_BUILD_MAP);
+        }
     } else if (MP_PARSE_NODE_IS_STRUCT(pn)) {
         pns = (mp_parse_node_struct_t*)pn;
         if (MP_PARSE_NODE_STRUCT_KIND(pns) == PN_dictorsetmaker_item) {
             // dict with one element
-            EMIT_ARG(build, 1, MP_EMIT_BUILD_MAP);
+            if (create_map) {
+                EMIT_ARG(build, 1, MP_EMIT_BUILD_MAP);
+            }
             compile_node(comp, pn);
             EMIT(store_map);
         } else if (MP_PARSE_NODE_STRUCT_KIND(pns) == PN_dictorsetmaker) {
@@ -2474,7 +2493,9 @@ STATIC void compile_atom_brace(compiler_t *comp, mp_parse_node_struct_t *pns) {
                 bool is_dict;
                 if (!MICROPY_PY_BUILTINS_SET || MP_PARSE_NODE_IS_STRUCT_KIND(pns->nodes[0], PN_dictorsetmaker_item)) {
                     // a dictionary
-                    EMIT_ARG(build, 1 + n, MP_EMIT_BUILD_MAP);
+                    if (create_map) {
+                        EMIT_ARG(build, 1 + n, MP_EMIT_BUILD_MAP);
+                    }
                     compile_node(comp, pns->nodes[0]);
                     EMIT(store_map);
                     is_dict = true;
@@ -2542,6 +2563,10 @@ STATIC void compile_atom_brace(compiler_t *comp, mp_parse_node_struct_t *pns) {
         assert(0);
         #endif
     }
+}
+
+STATIC void compile_atom_brace(compiler_t *comp, mp_parse_node_struct_t *pns) {
+    compile_atom_brace_helper(comp, pns, true);
 }
 
 STATIC void compile_trailer_paren(compiler_t *comp, mp_parse_node_struct_t *pns) {
@@ -2769,6 +2794,8 @@ STATIC int compile_viper_type_annotation(compiler_t *comp, mp_parse_node_t pn_an
 #endif
 
 STATIC void compile_scope_func_lambda_param(compiler_t *comp, mp_parse_node_t pn, pn_kind_t pn_name, pn_kind_t pn_star, pn_kind_t pn_dbl_star) {
+    (void)pn_dbl_star;
+
     // check that **kw is last
     if ((comp->scope_cur->scope_flags & MP_SCOPE_FLAG_VARKEYWORDS) != 0) {
         compile_syntax_error(comp, pn, "invalid syntax");
@@ -2835,9 +2862,8 @@ STATIC void compile_scope_func_lambda_param(compiler_t *comp, mp_parse_node_t pn
     }
 
     if (param_name != MP_QSTR_NULL) {
-        bool added;
-        id_info_t *id_info = scope_find_or_add_id(comp->scope_cur, param_name, &added);
-        if (!added) {
+        id_info_t *id_info = scope_find_or_add_id(comp->scope_cur, param_name, ID_INFO_KIND_UNDECIDED);
+        if (id_info->kind != ID_INFO_KIND_UNDECIDED) {
             compile_syntax_error(comp, pn, "argument name reused");
             return;
         }
@@ -2933,7 +2959,7 @@ STATIC void check_for_doc_string(compiler_t *comp, mp_parse_node_t pn) {
         if ((MP_PARSE_NODE_IS_LEAF(pns->nodes[0])
                 && MP_PARSE_NODE_LEAF_KIND(pns->nodes[0]) == MP_PARSE_NODE_STRING)
             || (MP_PARSE_NODE_IS_STRUCT_KIND(pns->nodes[0], PN_const_object)
-                && MP_OBJ_IS_STR(get_const_object((mp_parse_node_struct_t*)pns->nodes[0])))) {
+                && mp_obj_is_str(get_const_object((mp_parse_node_struct_t*)pns->nodes[0])))) {
                 // compile the doc string
                 compile_node(comp, pns->nodes[0]);
                 // store the doc string
@@ -3033,10 +3059,7 @@ STATIC void compile_scope(compiler_t *comp, scope_t *scope, pass_kind_t pass) {
         // so we use the blank qstr.
         qstr qstr_arg = MP_QSTR_;
         if (comp->pass == MP_PASS_SCOPE) {
-            bool added;
-            id_info_t *id_info = scope_find_or_add_id(comp->scope_cur, qstr_arg, &added);
-            assert(added);
-            id_info->kind = ID_INFO_KIND_LOCAL;
+            scope_find_or_add_id(comp->scope_cur, qstr_arg, ID_INFO_KIND_LOCAL);
             scope->num_pos_args = 1;
         }
 
@@ -3076,10 +3099,7 @@ STATIC void compile_scope(compiler_t *comp, scope_t *scope, pass_kind_t pass) {
         assert(MP_PARSE_NODE_STRUCT_KIND(pns) == PN_classdef);
 
         if (comp->pass == MP_PASS_SCOPE) {
-            bool added;
-            id_info_t *id_info = scope_find_or_add_id(scope, MP_QSTR___class__, &added);
-            assert(added);
-            id_info->kind = ID_INFO_KIND_LOCAL;
+            scope_find_or_add_id(scope, MP_QSTR___class__, ID_INFO_KIND_LOCAL);
         }
 
         compile_load_id(comp, MP_QSTR___name__);
@@ -3391,6 +3411,14 @@ mp_raw_code_t *mp_compile_to_raw_code(mp_parse_tree_t *parse_tree, qstr source_f
         #endif
         } else {
             compile_scope(comp, s, MP_PASS_SCOPE);
+
+            // Check if any implicitly declared variables should be closed over
+            for (size_t i = 0; i < s->id_info_len; ++i) {
+                id_info_t *id = &s->id_info[i];
+                if (id->kind == ID_INFO_KIND_GLOBAL_IMPLICIT) {
+                    scope_check_to_close_over(s, id);
+                }
+            }
         }
 
         // update maximim number of labels needed
