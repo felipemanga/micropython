@@ -452,8 +452,8 @@ STATIC mp_obj_t surface_blit(size_t n_args, const mp_obj_t *args) {
     if( n_args > 4)
         transparentColor = mp_obj_get_int(args[4]);
 
-	//TODO: take source->stride into account also
-	//TODO: check that source->format is acceptable
+    //TODO: take source->stride into account also
+    //TODO: check that source->format is acceptable
     Pok_Display_blitFrameBuffer(x, y, source->width, source->height, transparentColor, source->buf);
     return mp_const_none;
 }
