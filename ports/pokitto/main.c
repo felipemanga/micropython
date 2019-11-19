@@ -38,7 +38,7 @@ static char *stack_top;
 /* #endif */
 static char *heap;
 
-int PythonMain( unsigned int heapSize, char *heapMem ){
+int PyInSkyMain( unsigned int heapSize, char *heapMem ){
     int stack_dummy;
     stack_top = (char*)&stack_dummy;
 
